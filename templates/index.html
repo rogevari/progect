@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>System Load Monitor</title>
+    <!-- Подключаем Chart.js для построения графиков -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+    <h1>System Load Monitor</h1>
+
+    <!-- График для CPU -->
+    <h2>CPU Load</h2>
+    <canvas id="cpuChart" width="800" height="200"></canvas>
+    
+    <!-- График для GPU -->
+    <h2>GPU Load</h2>
+    <canvas id="gpuChart" width="800" height="200"></canvas>
+    
+    <!-- График для Интернет-трафика -->
+    <h2>Internet Traffic</h2>
+    <canvas id="netChart" width="800" height="200"></canvas>
+    
+    <!-- График для Memory -->
+    <h2>Memory Load</h2>
+    <canvas id="memChart" width="800" height="200"></canvas>
+
+    <!-- Форма для обновления пороговых значений -->
+    <div>
+        <h2>Настройка пороговых значений</h2>
+        <form id="thresholdForm">
+            <label>CPU (%) : <input type="number" id="thresholdCpu" value="90" step="0.1"></label>
+            <label>GPU (%) : <input type="number" id="thresholdGpu" value="90" step="0.1"></label>
+            <label>Memory (%) : <input type="number" id="thresholdMemory" value="90" step="0.1"></label>
+            <label>Net Sent (B/s) : <input type="number" id="thresholdNetSent" value="10485760"></label>
+            <label>Net Recv (B/s) : <input type="number" id="thresholdNetRecv" value="10485760"></label>
+            <button type="submit">Обновить</button>
+        </form>
+    </div>
+
+    <!-- Журнал событий -->
+    <h2>Event Log</h2>
+    <ul id="event_log"></ul>
+
+    <div>
+        <h2>Экспорт данных</h2>
+        <form id="exportForm">
+            <label>Начало периода: <input type="datetime-local" id="startTime" required></label>
+            <label>Конец периода: <input type="datetime-local" id="endTime" required></label>
+            <button type="submit">Выгрузить CSV</button>
+        </form>
+    </div>
+
+    <script>
+        // Инициализация графиков
+        const cpuCtx = document.getElementById('cpuChart').getContext('2d');
+        const gpuCtx = document.getElementById('gpuChart').getContext('2d');
+        const netCtx = document.getElementById('netChart').getContext('2d');
+        const memCtx = document.getElementById('memChart').getContext('2d');
+
+        const cpuChart = new Chart(cpuCtx, {
+            type: 'line',
+            data: { labels: [], datasets: [{ label: 'CPU', borderColor: 'red', fill: false, data: [] }] },
+            options: { scales: { x: { title: { display: true, text: 'Время' } }, y: { title: { display: true, text: 'Значение (%)' } } } }
+        });
+
+        const gpuChart = new Chart(gpuCtx, {
+            type: 'line',
+            data: { labels: [], datasets: [{ label: 'GPU', borderColor: 'blue', fill: false, data: [] }] },
+            options: { scales: { x: { title: { display: true, text: 'Время' } }, y: { title: { display: true, text: 'Значение (%)' } } } }
+        });
+
+        const netChart = new Chart(netCtx, {
+            type: 'line',
+            data: {
+                labels: [],
+                datasets: [
+                    { label: 'Net Sent', borderColor: 'green', fill: false, data: [] },
+                    { label: 'Net Recv', borderColor: 'purple', fill: false, data: [] }
+                ]
+            },
+            options: { scales: { x: { title: { display: true, text: 'Время' } }, y: { title: { display: true, text: 'B/s' } } } }
+        });
+
+        const memChart = new Chart(memCtx, {
+            type: 'line',
+            data: { labels: [], datasets: [{ label: 'Memory', borderColor: 'orange', fill: false, data: [] }] },
+            options: { scales: { x: { title: { display: true, text: 'Время' } }, y: { title: { display: true, text: 'Значение (%)' } } } }
+        });
+
+        function updateCharts() {
+            fetch('/api/load')
+                .then(res => res.json())
+                .then(data => {
+                    if (data.length > 0) {
+                        const latest = data[0];
+                        const timeLabel = new Date(latest.timestamp).toLocaleTimeString();
+
+                        // Обновление всех графиков с ограничением до 20 точек
+                        [cpuChart, gpuChart, netChart, memChart].forEach(chart => {
+                            chart.data.labels.push(timeLabel);
+                            if (chart.data.labels.length > 20) {
+                                chart.data.labels.shift();
+                            }
+                        });
+
+                        cpuChart.data.datasets[0].data.push(latest.cpu);
+                        if (cpuChart.data.datasets[0].data.length > 20) cpuChart.data.datasets[0].data.shift();
+
+                        gpuChart.data.datasets[0].data.push(latest.gpu_percent);
+                        if (gpuChart.data.datasets[0].data.length > 20) gpuChart.data.datasets[0].data.shift();
+
+                        memChart.data.datasets[0].data.push(latest.memory);
+                        if (memChart.data.datasets[0].data.length > 20) memChart.data.datasets[0].data.shift();
+
+                        // Обновление графика для интернет-трафика (Net Sent и Net Recv)
+                        netChart.data.datasets[0].data.push(latest.net_sent);
+                        if (netChart.data.datasets[0].data.length > 20) netChart.data.datasets[0].data.shift();
+
+                        netChart.data.datasets[1].data.push(latest.net_recv);
+                        if (netChart.data.datasets[1].data.length > 20) netChart.data.datasets[1].data.shift();
+
+                        cpuChart.update();
+                        gpuChart.update();
+                        netChart.update();
+                        memChart.update();
+                    }
+                });
+        }
+
+        function updateEvents() {
+            fetch('/api/events')
+                .then(res => res.json())
+                .then(data => {
+                    let eventsHtml = "";
+                    data.forEach(event => {
+                        eventsHtml += `<li>[${new Date(event.timestamp).toLocaleTimeString()}] ${event.level}: ${event.message}</li>`;
+                    });
+                    document.getElementById('event_log').innerHTML = eventsHtml;
+                });
+        }
+
+        setInterval(updateCharts, 2000);
+        setInterval(updateEvents, 5000);
+
+        // Обработка отправки формы для обновления пороговых значений
+        document.getElementById('thresholdForm').addEventListener('submit', (e) => {
+            e.preventDefault();
+            const thresholds = {
+                cpu: parseFloat(document.getElementById('thresholdCpu').value),
+                gpu: parseFloat(document.getElementById('thresholdGpu').value),
+                memory: parseFloat(document.getElementById('thresholdMemory').value),
+                net_sent: parseFloat(document.getElementById('thresholdNetSent').value),
+                net_recv: parseFloat(document.getElementById('thresholdNetRecv').value)
+            };
+            fetch('/api/thresholds', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(thresholds)
+            })
+            .then(res => res.json())
+            .then(data => { alert("Пороговые значения обновлены"); });
+        });
+        document.getElementById('exportForm').addEventListener('submit', (e) => {
+            e.preventDefault();
+        
+            const start = document.getElementById('startTime').value;
+            const end = document.getElementById('endTime').value;
+        
+
+            if (!start || !end) {
+                alert("Укажите обе даты");
+                return;
+            }
+        
+            const url = `/api/export?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`;
+        
+            fetch(url)
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error("Ошибка при экспорте данных");
+                    }
+                    return response.blob();
+                })
+                .then(blob => {
+                    const link = document.createElement("a");
+                    link.href = URL.createObjectURL(blob);
+                    link.download = "export.csv";
+                    document.body.appendChild(link);
+                    link.click();
+                    document.body.removeChild(link);
+                })
+                .catch(err => {
+                    alert("Ошибка при экспорте данных: " + err.message);
+                });
+        });
+    </script>
+</body>
